@@ -14,6 +14,9 @@ from numba import jit,njit,prange,cuda
 from .utils import optional
 from .streams import init_streams,wait_streams,get_hw_batches,view_batch,vprint
 
+def fill_img(noisy,indices,ps,ps_t,patches=None):
+    return fill_patches_img(noisy,indices,ps,ps_t,patches)
+
 def fill_patches_img(noisy,indices,ps,ps_t,patches=None):
 
     # -- init --

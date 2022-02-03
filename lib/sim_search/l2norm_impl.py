@@ -111,25 +111,44 @@ def compute_l2norm_launcher(dists,indices,fflow,bflow,access,bufs,noisy,
     cs_nba = cuda.external_stream(cs)
 
     # -- batches per block --
-    batches_per_block = 4
+    batches_per_block = 10
     bpb = batches_per_block
 
     # -- launch params --
     w_thread = min(w_s,32)
     nthread_loops = divUp(w_s,32)
     threads = (w_thread,w_thread)
+    nthread_loops = w_s*w_s
     blocks = divUp(bsize,batches_per_block)
+    # print(dir(cuda))
+    # threads = (1,1,0)
+    # blocks = (1,1,0)
+    # threads,blocks = 1,1
+    # print(access)
+    # print(bufs.shape)
+    # print(noisy.shape)
+    # print(dists.shape)
+    # print(blocks,threads)
+    # print(tranges.shape)
+    # print(n_tranges.shape)
+    # print(min_tranges.shape)
 
     try:
         # -- launch kernel --
-        compute_l2norm_kernel[blocks,threads](dists_nba,indices_nba,
-                                              fflow_nba,bflow_nba,
-                                              access_nba,bufs_nba,
-                                              noisy_nba,tranges_nba,
-                                              n_tranges_nba,min_tranges_nba,
-                                              bpb,ps,ps_t,nWt_f,nWt_b,
-                                              nthread_loops,step1,offset)
-        torch.cuda.synchronize()
+        # print("pre.")
+        # compute_l2norm_kernel[blocks,threads](dists,indices,fflow,bflow,
+        #                                       access,bufs,noisy,tranges,
+        #                                       n_tranges,min_tranges,
+        #                                       bpb,ps,ps_t,nWt_f,nWt_b,
+        #                                       nthread_loops,step1,offset)
+        compute_l2norm_kernel[blocks,threads,cs_nba](dists_nba,indices_nba,
+                                                     fflow_nba,bflow_nba,
+                                                     access_nba,bufs_nba,
+                                                     noisy_nba,tranges_nba,
+                                                     n_tranges_nba,min_tranges_nba,
+                                                     bpb,ps,ps_t,nWt_f,nWt_b,
+                                                     nthread_loops,step1,offset)
+        # torch.cuda.synchronize()
     except Exception as e:
         # pdb.set_trace()
         print("\n\n\nsome debuggin values.\n\n\n")
@@ -142,10 +161,22 @@ def compute_l2norm_launcher(dists,indices,fflow,bflow,access,bufs,noisy,
         print(e)
 
 
-@cuda.jit(debug=True)#max_registers=64)
+def check_valid_access(access,t,h,w,ps,pt):
+    """
+    This code determines if the indices we accesse were valid.
+
+    There was an error with this in an earlier version of this code.
+
+    I am writing the function call for future users (me)
+    to be aware of this access error.
+    """
+    pass
+
+
+@cuda.jit(debug=False,max_registers=64)
 def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
-                          n_tranges,min_tranges,bpb,ps,ps_t,nWt_f,nWt_b,
-                          nthread_loops,step1,offset):
+                           n_tranges,min_tranges,bpb,ps,ps_t,nWt_f,nWt_b,
+                           nthread_loops,step1,offset):
 
     # -- local function --
     def bounds(val,lim):
@@ -183,8 +214,8 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
     cu_tidY = cuda.threadIdx.y
     blkDimX = cuda.blockDim.x
     blkDimY = cuda.blockDim.y
-    # tidX = cuda.threadIdx.x
-    # tidY = cuda.threadIdx.y
+    tidX = cuda.threadIdx.x
+    tidY = cuda.threadIdx.y
 
     # # -- pixel we are sim-searching for --
     # top,left = h_start+hi,w_start+wi
@@ -213,6 +244,7 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
         ti = access[bidx,0]
         hi = access[bidx,1]
         wi = access[bidx,2]
+        # ti,hi,wi = 0,0,0
         top,left = hi,wi
 
         # ---------------------------
@@ -229,6 +261,8 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
         valid_left = valid_left and (left >= 0)
 
         valid_anchor = valid_t and valid_top and valid_left
+
+        # if not(valid_anchor): continue
 
         # ---------------------------------------
         #     searching loop for (ti,top,left)
@@ -350,16 +384,16 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                             for pj in range(ps):
 
                                 # -- inside entire image --
-                                # vH = top+pi#bounds(top+pi,h-1)
-                                # vW = left+pj#bounds(left+pj,w-1)
-                                vH = bounds(top+pi,h-1)
-                                vW = bounds(left+pj,w-1)
+                                vH = top+pi#bounds(top+pi,h-1)
+                                vW = left+pj#bounds(left+pj,w-1)
+                                # vH = bounds(top+pi,h-1)
+                                # vW = bounds(left+pj,w-1)
                                 vT = ti + pt
 
-                                # nH = n_top+pi#bounds(n_top+pi,h-1)
-                                # nW = n_left+pj#bounds(n_left+pj,w-1)
-                                nH = bounds(n_top+pi,h-1)
-                                nW = bounds(n_left+pj,w-1)
+                                nH = n_top+pi#bounds(n_top+pi,h-1)
+                                nW = n_left+pj#bounds(n_left+pj,w-1)
+                                # nH = bounds(n_top+pi,h-1)
+                                # nW = bounds(n_left+pj,w-1)
                                 nT = n_ti + pt
 
                                 # -- all channels --
@@ -385,6 +419,14 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                     ind += n_top * width
                     ind += n_left
                     inds[bidx,tidZ,tidX,tidY] = ind if dist < np.infty else -1
+
+                    # -- final check [put self@index 0] --
+                    eq_ti = n_ti == ti
+                    eq_hi = n_top == top # hi
+                    eq_wi = n_left == left # wi
+                    eq_dim = eq_ti and eq_hi and eq_wi
+                    dist = dists[bidx,tidZ,tidX,tidY]
+                    dists[bidx,tidZ,tidX,tidY] = -1 if eq_dim else dist
 
                     # -- access pattern --
                     # access[0,dt,tidX,tidY,ti,hi,wi] = n_ti
