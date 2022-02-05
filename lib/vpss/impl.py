@@ -17,7 +17,6 @@ def exec_sim_search(srch_img,srch_inds,sigma,k=None,
     """
 
     # -- optionally no batch index  --
-    print("srch img: ",srch_img.ndim)
     no_batch = srch_img.ndim == 4
     if no_batch:
         srch_img = srch_img[None,:]
@@ -72,7 +71,8 @@ def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
     w_s = optional(args,'w_s',27)
     nWt_f = optional(args,'nWt_f',6)
     nWt_b = optional(args,'nWt_b',6)
-    step1 = optional(args,'step1',0)
+    step = optional(args,'step',0)
+    step1 = step == 0
     pt = optional(args,'pt',2)
     pt = optional(args,'ps_t',pt)
     cs_ptr = optional(args,'cs_ptr',th.cuda.default_stream().cuda_stream)
@@ -83,10 +83,10 @@ def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
                                           srch_inds,step_s,ps,pt,w_s,nWt_f,
                                           nWt_b,step1,offset,cs_ptr)
 
+
     # -- compute top k --
     device,b = l2_vals.device,l2_vals.shape[0]
     get_topk(l2_vals,l2_inds,vals,inds)
-
 
 def ensure_srch_inds(inds,srch_inds,h,w,c):
     """

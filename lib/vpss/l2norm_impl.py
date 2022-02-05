@@ -37,7 +37,7 @@ def compute_l2norm_cuda(noisy,fflow,bflow,access,step_s,ps,ps_t,w_s,
     bufs = torch.zeros(bsize,3,w_t,w_s,w_s).type(torch.int32).to(device)
 
     # -- run launcher --
-    dists *= torch.inf
+    dists[...] = torch.inf
     indices[...] = -1
     # print("cuda_l2: ",noisy[0,0,0,0])
     # print("[l2norm_cuda] ps,ps_t: ",ps,ps_t)
@@ -159,6 +159,7 @@ def compute_l2norm_launcher(dists,indices,fflow,bflow,access,bufs,noisy,
         print(min_tranges)
         print("exception!")
         print(e)
+
 
 
 def check_valid_access(access,t,h,w,ps,pt):
@@ -296,7 +297,7 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                     direction = max(-1,min(1,n_ti - ti))
                     if direction != 0:
                         dtd = dt-direction
-                        if dtd >= bufs.shape[2]: continue
+                        # if dtd >= bufs.shape[2]: continue
                         cw0 = bufs[bidx,0,dt-direction,tidX,tidY]
                         ch0 = bufs[bidx,1,dt-direction,tidX,tidY]
                         ct0 = bufs[bidx,2,dt-direction,tidX,tidY]
@@ -317,7 +318,7 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                     # ----------------
                     #     update
                     # ----------------
-                    if dt >= bufs.shape[2]: continue
+                    # if dt >= bufs.shape[2]: continue
                     bufs[bidx,0,dt,tidX,tidY] = cw#cw_vals[ti-direction]
                     bufs[bidx,1,dt,tidX,tidY] = ch#ch_vals[t_idx-direction]
                     bufs[bidx,2,dt,tidX,tidY] = ct#ct_vals[t_idx-direction]
@@ -409,9 +410,9 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
 
                     # -- dists --
                     is_zero = dist < 1e-8
-                    dist = dist-offset if dist < np.infty else dist
-                    dist = abs(dist)# if dist > 0 else 0.
-                    dist = 0. if is_zero else dist
+                    # dist = dist/Z-offset if dist < np.infty else dist
+                    # dist = dist if dist > 0 else 0.
+                    # dist = 0. if is_zero else dist
                     dists[bidx,tidZ,tidX,tidY] = dist/Z
 
                     # -- inds --
@@ -426,7 +427,7 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                     eq_wi = n_left == left # wi
                     eq_dim = eq_ti and eq_hi and eq_wi
                     dist = dists[bidx,tidZ,tidX,tidY]
-                    dists[bidx,tidZ,tidX,tidY] = -1 if eq_dim else dist
+                    dists[bidx,tidZ,tidX,tidY] = -100 if eq_dim else dist
 
                     # -- access pattern --
                     # access[0,dt,tidX,tidY,ti,hi,wi] = n_ti
