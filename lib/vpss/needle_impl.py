@@ -79,10 +79,9 @@ def get_needles(patches,nps,nscales,scale):
                               align_corners=True)
         needles.append(patch_s)
     needles = th.stack(needles)
-    print("needles.shape: ",needles.shape)
 
     # -- reshaping --
     needles = rearrange(needles,'s (b n k t) c h w -> b n k s t c h w',b=B,n=N,k=K)
-    print("needles.shape: ",needles.shape)
+    if no_batch: needles = needles[0]
 
     return needles
