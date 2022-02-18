@@ -1,4 +1,7 @@
 
+# -- python --
+from easydict import EasyDict as edict
+
 # -- linalg --
 import numpy as np
 import torch as th
@@ -6,6 +9,8 @@ import torch as th
 # -- sim search import --
 from .utils import optional
 from .l2norm_impl import compute_l2norm_cuda
+from .fill_patches import get_patches_burst
+from .needle_impl import get_needles
 
 def exec_sim_search(srch_img,srch_inds,sigma,k=None,
                     inds=None,vals=None,flows=None,**kwargs):
@@ -62,6 +67,49 @@ def allocate_flows(T,H,W,device):
     return flows
 
 def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
+    stype = optional(args,"stype","l2")
+    if stype == "l2":
+        exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args)
+    elif stype == "needle":
+        exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args)
+    else:
+        raise NotImplemented("")
+
+def exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args):
+
+    # -- standard search --
+    kneedle = 500
+    N,k = vals.shape
+    device = srch_img.device
+    l2_vals = th.zeros((N,kneedle),dtype=th.float32).to(device)
+    l2_inds = th.zeros((N,kneedle),dtype=th.long).to(device)
+    exec_sim_search_burst_l2(srch_img,srch_inds,l2_vals,l2_inds,flows,sigma,args)
+
+    # -- unpack options --
+    pt = optional(args,'pt',2)
+    pt = optional(args,'ps_t',pt)
+    ps = optional(args,"ps",7)
+    nps = optional(args,"nps",23)
+    nscales = optional(args,'nscales',8)
+    scale = optional(args,'needle_scale',0.75)
+
+    # -- patches --
+    patches = get_patches_burst(srch_img,l2_inds,ps,cs=None,pt=pt)
+
+    # -- get needle --
+    needles = get_needles(patches,nps,nscales,scale)
+
+    # -- delta of top 500 by needles --
+    print("needles.shape: ",needles.shape)
+    n_vals = th.mean((needles[[0]] - needles)**2,0)
+    print("delta.shape: ",delta.shape)
+
+    # -- compute top k --
+    device,b = n_vals.device,n_vals.shape[0]
+    get_topk(n_vals,l2_inds,vals,inds)
+
+
+def exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args):
 
     # -- fixed params --
     device = srch_img.device

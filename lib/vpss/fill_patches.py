@@ -99,6 +99,7 @@ def get_patches_batch(noisy,inds,ps,cs=None,**kwargs):
 def get_patches_burst(noisy,inds,ps,cs=None,**kwargs):
 
     # -- create output --
+    device = noisy.device
     t,c,h,w = noisy.shape
     npatches,k = inds.shape
     pt = optional(kwargs,'pt',2)

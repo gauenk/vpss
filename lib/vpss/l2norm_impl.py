@@ -176,8 +176,8 @@ def check_valid_access(access,t,h,w,ps,pt):
 
 @cuda.jit(debug=False,max_registers=64)
 def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
-                           n_tranges,min_tranges,bpb,ps,ps_t,nWt_f,nWt_b,
-                           nthread_loops,step1,offset):
+                          n_tranges,min_tranges,bpb,ps,ps_t,nWt_f,nWt_b,
+                          nthread_loops,step1,offset):
 
     # -- local function --
     def bounds(val,lim):
