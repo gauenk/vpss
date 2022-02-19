@@ -29,7 +29,9 @@ def compute_l2norm_cuda(noisy,fflow,bflow,access,step_s,ps,ps_t,w_s,
     # -- init dists --
     # (w_s = windowSpace), (w_t = windowTime)
     bsize,three = access.shape
-    w_t = min(nWt_f + nWt_b + 1,t-1)
+    w_t = min(nWt_f + nWt_b + 1,t-ps_t+1)
+    # w_t = min(nWt_f + nWt_b + 1,t-ps_t+1)
+    # w_t = min(nWt_f + nWt_b + 1,t)
     # print(bsize,w_t,w_s,w_s)
     dists = torch.ones(bsize,w_t,w_s,w_s).type(torch.float32).to(device)
     dists *= float("inf")
@@ -125,7 +127,7 @@ def compute_l2norm_launcher(dists,indices,fflow,bflow,access,bufs,noisy,
     # blocks = (1,1,0)
     # threads,blocks = 1,1
     # print(access)
-    # print(bufs.shape)
+    # print("bufs.shape: ",bufs.shape)
     # print(noisy.shape)
     # print(dists.shape)
     # print(blocks,threads)

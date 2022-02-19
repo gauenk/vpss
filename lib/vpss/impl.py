@@ -1,10 +1,15 @@
 
 # -- python --
+import math
 from easydict import EasyDict as edict
 
 # -- linalg --
 import numpy as np
 import torch as th
+from einops import rearrange,repeat
+
+# -- separate package --
+import hids
 
 # -- sim search import --
 from .utils import optional
@@ -73,40 +78,87 @@ def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
     elif stype == "needle":
         exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args)
     else:
-        raise NotImplemented("")
+        raise ValueError(f"stype = [{stype}]")
 
 def exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args):
 
     # -- standard search --
-    kneedle = 500
     N,k = vals.shape
+    kneedle = 200
     device = srch_img.device
     l2_vals = th.zeros((N,kneedle),dtype=th.float32).to(device)
-    l2_inds = th.zeros((N,kneedle),dtype=th.long).to(device)
+    l2_inds = -th.ones((N,kneedle),dtype=th.long).to(device)
     exec_sim_search_burst_l2(srch_img,srch_inds,l2_vals,l2_inds,flows,sigma,args)
+
+    # -- simple case --
+    # exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args)
+    # return
 
     # -- unpack options --
     pt = optional(args,'pt',2)
     pt = optional(args,'ps_t',pt)
     ps = optional(args,"ps",7)
-    nps = optional(args,"nps",23)
+    nps = optional(args,"nps",7)
     nscales = optional(args,'nscales',8)
     scale = optional(args,'needle_scale',0.75)
+    ipos = optional(args,'ipos',"top-left")
 
     # -- patches --
-    patches = get_patches_burst(srch_img,l2_inds,ps,cs=None,pt=pt)
+    # we want the "ps" patch in the center of a larger patch --
+    ci = 1 if args.step == 0 else 3
+    scale = 0.75
+    iscale = math.ceil(1/(scale**nscales))
+    ips = iscale * nps
+    ips += (ips % 2) == 0
+    poff = (ips - ps)/2.
+    assert poff == int(poff),"int valued for now."
+    poff = int(poff)
+    # poff = 0
+    # ips = ps
+    # print("ips: ",ips)
+    # print("poff: ",poff)
+    # print("ipos: ",ipos)
+    # print("iscale: ",iscale)
+    # print("srch_img[min,max]: ",srch_img.min().item(),srch_img.max().item())
+    patches = get_patches_burst(srch_img,l2_inds,ips,cs=None,pt=pt,poff=poff)
 
     # -- get needle --
+    # print("patches[min,max]: ",patches.min().item(),patches.max().item())
     needles = get_needles(patches,nps,nscales,scale)
+    # needles = patches[:,:,None,:,:,:,:]
+    # needles = patches[:,:,None,:,:,4:11,4:11]
+    # needles = patches[:,:,None,:,:,12:19,12:19]
+    # needles = needles[:,:,[0]]
+    # print("[2] needles.shape: ",needles.shape)
+
+    # -- beam search for subset --
+    # pshape = th.IntTensor(list(needles.shape[2:]))
+    # pshape = (pshape[0]*pshape[1],pshape[2],pshape[3],pshape[4])
+    # needles = rearrange(needles[...,:ci,:,:],'b n s t c h w -> b n 1 (s t c h w)')
+    # n_vals,n_inds = hids.subset_search(needles[:,:,0],sigma,k,"beam",
+    #                                    bwidth=10,swidth=10,
+    #                                    num_search = 10, max_mindex=3,
+    #                                    svf_method="svar_needle",pshape=pshape)
+    # inds[...] = th.gather(l2_inds,1,n_inds)
+    # vals[...] = n_vals[...,None]
+
+    # -- compute clusters --
+    # clusters = cluster_needles(needles,sigma)
+
+    # -- extract patch --
+
+    #
+    # -- select method v2 [simple] --
+    #
 
     # -- delta of top 500 by needles --
     mean_dims = (-5,-4,-3,-2,-1)
-    n_vals = th.mean((needles[:,[0]] - needles)**2,mean_dims)
+    n_vals = th.mean((needles[:,[0],:,:,:ci] - needles[:,:,:,:,:ci])**2,mean_dims)
+    n_vals[th.nonzero(l2_inds == -1,as_tuple=True)] = float("inf")
 
     # -- compute top k --
     device,b = n_vals.device,n_vals.shape[0]
     get_topk(n_vals,l2_inds,vals,inds)
-
 
 def exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args):
 
