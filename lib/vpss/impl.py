@@ -100,12 +100,8 @@ def exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args):
     needles = get_needles(patches,nps,nscales,scale)
 
     # -- delta of top 500 by needles --
-    print("needles.shape: ",needles.shape)
     mean_dims = (-5,-4,-3,-2,-1)
     n_vals = th.mean((needles[:,[0]] - needles)**2,mean_dims)
-    print("n_vals.shape: ",n_vals.shape)
-    print("vals.shape: ",vals.shape)
-    print("inds.shape: ",inds.shape)
 
     # -- compute top k --
     device,b = n_vals.device,n_vals.shape[0]
