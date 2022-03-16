@@ -46,6 +46,7 @@ def select_patch_inds(img,npatches,ps):
     device = img.device
     B,T,C,H,W = img.shape
     inds = th.zeros((B,npatches,3),dtype=th.long,device=device)
+    BDR = 8
 
     # -- for each elem ... --
     for b in range(B):
@@ -54,20 +55,20 @@ def select_patch_inds(img,npatches,ps):
         edges = apply_sobel_filter(img[b])
 
         # -- don't grab near edges --
-        edges[...,:32,:] = -100
-        edges[...,:,:32] = -100
-        edges[...,:,-32:] = -100
-        edges[...,-32:,:] = -100
+        edges[...,:BDR,:] = -100
+        edges[...,:,:BDR] = -100
+        edges[...,:,-BDR:] = -100
+        edges[...,-BDR:,:] = -100
 
         # -- sample indices prop. to edge weight --
-        perc95 = th.quantile(edges[...,32:-32,32:-32].ravel(),0.95)
+        perc95 = th.quantile(edges[...,BDR:-BDR,BDR:-BDR].ravel(),0.95)
         mask = edges > perc95
 
         # -- filter out edges --
-        mask[...,:32,:] = 0
-        mask[...,:,:32] = 0
-        mask[...,-32:,:] = 0
-        mask[...,:,-32:] = 0
+        mask[...,:BDR,:] = 0
+        mask[...,:,:BDR] = 0
+        mask[...,-BDR:,:] = 0
+        mask[...,:,-BDR:] = 0
         mask[T-1,...] = 0
 
         # -- select inds --

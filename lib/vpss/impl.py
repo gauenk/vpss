@@ -13,9 +13,11 @@ import hids
 
 # -- sim search import --
 from .utils import optional
-from .l2norm_impl import compute_l2norm_cuda
+from .l2norm_impl import compute_l2norm_cuda,compute_l2norm_cuda_fast
+from .l2norm_impl import python_faiss_cuda
 from .fill_patches import get_patches_burst
 from .needle_impl import get_needles
+
 
 def exec_sim_search(srch_img,srch_inds,sigma,k=None,
                     inds=None,vals=None,flows=None,**kwargs):
@@ -31,6 +33,7 @@ def exec_sim_search(srch_img,srch_inds,sigma,k=None,
     if no_batch:
         srch_img = srch_img[None,:]
         srch_inds = srch_inds[None,:]
+    assert (srch_img.ndim == 5) and (srch_inds.ndim == 3)
 
     # -- create output --
     device = srch_img.device
@@ -75,6 +78,8 @@ def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
     stype = optional(args,"stype","l2")
     if stype == "l2":
         exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args)
+    elif stype == "faiss":
+        exec_sim_search_burst_faiss(srch_img,srch_inds,vals,inds,flows,sigma,args)
     elif stype == "needle":
         exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args)
     else:
@@ -160,6 +165,38 @@ def exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args):
     device,b = n_vals.device,n_vals.shape[0]
     get_topk(n_vals,l2_inds,vals,inds)
 
+def exec_sim_search_burst_l2_fast(srch_img,srch_inds,
+                                  vals,inds,
+                                  srch_dists,srch_locs,srch_bufs,
+                                  flows,sigma,args):
+
+    # -- fixed params --
+    device = srch_img.device
+    T,C,H,W = srch_img.shape
+    step_s = 1 # this does nothing
+
+    ps = optional(args,"ps",7)
+    w_s = optional(args,'w_s',27)
+    nWt_f = optional(args,'nWt_f',6)
+    nWt_b = optional(args,'nWt_b',6)
+    step = optional(args,'step',0)
+    step1 = step == 0
+    pt = optional(args,'pt',2)
+    pt = optional(args,'ps_t',pt)
+    cs_ptr = optional(args,'cs_ptr',th.cuda.default_stream().cuda_stream)
+    offset = optional(args,'offset',0)
+
+    # -- compute values for srch_inds --
+    l2_vals,l2_inds = compute_l2norm_cuda_fast(srch_img,flows.fflow,flows.bflow,
+                                               srch_dists,srch_locs,srch_bufs,
+                                               srch_inds,step_s,ps,pt,w_s,nWt_f,
+                                               nWt_b,step1,offset,cs_ptr)
+
+    # -- compute top k --
+    device,b = l2_vals.device,l2_vals.shape[0]
+    get_topk(l2_vals,l2_inds,vals,inds)
+
+
 def exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args):
 
     # -- fixed params --
@@ -182,6 +219,31 @@ def exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args):
                                           srch_inds,step_s,ps,pt,w_s,nWt_f,
                                           nWt_b,step1,offset,cs_ptr)
 
+    # -- compute top k --
+    device,b = l2_vals.device,l2_vals.shape[0]
+    get_topk(l2_vals,l2_inds,vals,inds)
+
+def exec_sim_search_burst_faiss(srch_img,srch_inds,vals,inds,flows,sigma,args):
+
+    # -- fixed params --
+    device = srch_img.device
+    T,C,H,W = srch_img.shape
+    step_s = 1 # this does nothing
+    ps = optional(args,"ps",7)
+    w_s = optional(args,'w_s',27)
+    nWt_f = optional(args,'nWt_f',6)
+    nWt_b = optional(args,'nWt_b',6)
+    step = optional(args,'step',0)
+    step1 = step == 0
+    pt = optional(args,'pt',2)
+    pt = optional(args,'ps_t',pt)
+    cs_ptr = optional(args,'cs_ptr',th.cuda.default_stream().cuda_stream)
+    offset = optional(args,'offset',0)
+
+    # -- compute values for srch_inds --
+    l2_vals,l2_inds = python_faiss_cuda(srch_img,flows.fflow,flows.bflow,
+                                        srch_inds,step_s,ps,pt,w_s,nWt_f,
+                                        nWt_b,step1,offset,cs_ptr)
 
     # -- compute top k --
     device,b = l2_vals.device,l2_vals.shape[0]

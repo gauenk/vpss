@@ -105,17 +105,19 @@ def get_patches_burst(noisy,inds,ps,cs=None,**kwargs):
     pt = optional(kwargs,'pt',2)
     pt = optional(kwargs,'ps_t',pt)
     poff = optional(kwargs,'poff',0)
+    mode = optional(kwargs,'fill_mode',"default")
 
     # -- create patches --
     shape = (npatches,k,pt,c,ps,ps)
     patches = optional(kwargs,'patches',None)
+    print("shapes: ",patches.shape,shape)
     if patches is None:
         patches = torch.zeros(shape,dtype=torch.float,device=device)
-    fill_patches(patches,noisy,inds,poff,cs)
+    fill_patches(patches,noisy,inds,poff,cs,mode)
 
     return patches
 
-def fill_patches(patches,noisy,inds,poff=0,cs=None):
+def fill_patches(patches,noisy,inds,poff=0,cs=None,mode="default"):
 
     # -- create output --
     t,c,h,w = noisy.shape
@@ -127,10 +129,10 @@ def fill_patches(patches,noisy,inds,poff=0,cs=None):
     # print(inds)
 
     # -- run launcher --
-    fill_patches_launcher(patches,noisy,inds,poff,cs)
+    fill_patches_launcher(patches,noisy,inds,poff,cs,mode)
 
 
-def fill_patches_launcher(patches,noisy,inds,poff,cs):
+def fill_patches_launcher(patches,noisy,inds,poff,cs,mode="default"):
 
     # -- create output --
     t,c,h,w = noisy.shape
@@ -154,7 +156,15 @@ def fill_patches_launcher(patches,noisy,inds,poff,cs):
     # print(blocks,threads)
 
     # -- launch --
-    fill_patches_kernel[blocks,threads,cs_nba](patches_nba,noisy_nba,inds_nba,poff,bpb)
+    if mode == "default":
+        fill_patches_kernel[blocks,threads,cs_nba](patches_nba,noisy_nba,
+                                                   inds_nba,poff,bpb)
+    elif mode == "faiss":
+        assert poff == 0
+        fill_patches_kernel_faiss[blocks,threads,cs_nba](patches_nba,noisy_nba,
+                                                         inds_nba,poff,bpb)
+    else:
+        raise ValueError(f"Uknown mode [{mode}]")
     # fill_patches_kernel_midpix[blocks,threads,cs_nba](patches_nba,noisy_nba,
     #                                                   inds_nba,bpb)
 
@@ -212,6 +222,73 @@ def fill_patches_kernel_midpix(patches,noisy,inds,bpb):
                             vh = (nH+pi-psHalf) % height
                             vw = (nW+pj-psHalf) % width
                             val = noisy[vt,ci,vh,vw]
+                            patches[bidx,nidx,pt,ci,pi,pj] = val
+
+
+@cuda.jit
+def fill_patches_kernel_faiss(patches,noisy,inds,poff,bpb):
+
+    # -- local function --
+    def bounds(val,lim):
+        if val < 0: val = -val - 1
+        if val >= lim: val = 2*lim - val - 1
+        return val
+
+    def idx2coords(idx,height,width):
+
+        # -- get shapes --
+        wh = width*height
+
+        # -- compute coords --
+        t = (idx ) // wh
+        y = (idx % wh ) // width
+        x = idx % width
+
+        return t,y,x
+
+    # -- shapes --
+    nframes,color,height,width = noisy.shape
+    # w_t,w_s,w_s,t,h_batch,w_batch = inds.shape
+    bsize,k,ps_t,color,ps,ps = patches.shape
+    t = nframes
+    whc = width*height*color
+    wh = width*height
+
+    # -- halfs --
+    ws = 27
+    wsHalf = ws//2
+    psHalf = ps//2
+
+    # -- access with blocks and threads --
+    batch_start = cuda.blockIdx.x*bpb
+    nidx = cuda.threadIdx.x # top k index "num"
+
+    # -- compute dists --
+    if nidx < inds.shape[1]:
+        for _bidx in range(bpb):
+
+            bidx = batch_start + _bidx
+            if bidx >= inds.shape[0]: continue
+
+            ind = inds[bidx,nidx]
+            if ind == -1: continue
+            nT,nH,nW = idx2coords(ind,height,width)
+            # assert nH >= 0 and nH < height
+            # assert nW >= 0 and nW < width
+            for pt in range(ps_t):
+                for ci in range(color):
+                    for pi in range(ps):
+                        for pj in range(ps):
+                            # vt = (nT+pt) % nframes
+                            vt = nT+pt
+                            # vh = nH+pi
+                            # vw = nW+pj
+                            # vh = (nH+pi-poff) % height
+                            # vw = (nW+pj-poff) % width
+                            vh = bounds(nH-psHalf+pi,height)
+                            vw = bounds(nW-psHalf+pj,width)
+                            val = noisy[vt,ci,vh,vw]
+                            # val = noisy[nT+pt,ci,nH+pi,nW+pj]
                             patches[bidx,nidx,pt,ci,pi,pj] = val
 
 
