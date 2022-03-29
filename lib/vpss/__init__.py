@@ -1,3 +1,4 @@
+from . import sim_img
 from .impl import exec_sim_search,exec_sim_search_burst
 from .impl import exec_sim_search as exec_search
 from .impl import exec_sim_search_burst_l2_fast
@@ -7,3 +8,4 @@ from .fill_patches import get_patches_burst
 from .imgs2patches import select_patch_inds,construct_patches
 from .needle_impl import get_needles
 from .warp_img import compute_warp
+from .impl import exh_search_default_args,exh_search_default,exh_search

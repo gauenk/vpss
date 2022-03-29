@@ -8,6 +8,7 @@ using the centroids
 # -- python --
 import sys,pdb
 import torch
+import torch as th
 import torchvision
 import numpy as np
 from einops import rearrange,repeat
@@ -15,6 +16,7 @@ from einops import rearrange,repeat
 # -- numba --
 from numba import jit,njit,prange,cuda
 
+from .sim_kernel import sim_search_kernel
 
 def divUp(a,b): return (a-1)//b+1
 
@@ -147,7 +149,6 @@ def compute_l2norm_launcher(dists,indices,fflow,bflow,access,bufs,noisy,
     # print(blocks,threads)
     # print(tranges.shape)
     # print(min_tranges.shape)
-
 
     try:
         # -- launch kernel --
@@ -458,6 +459,76 @@ def compute_l2norm_kernel(dists,inds,fflow,bflow,access,bufs,noisy,tranges,
                     # access[0,dt,tidX,tidY,ti,hi,wi] = n_ti
                     # access[1,dt,tidX,tidY,ti,hi,wi] = n_top
                     # access[2,dt,tidX,tidY,ti,hi,wi] = n_left
+
+# ------------------------------------------------------
+#
+#  Created to search similar patches in the center-index,
+#  non-reference-frame patches.
+#
+# -------------------------------------------------------
+
+
+def sim_cuda(noisy,access,fflow,bflow,ref,ps,pt,chnls,ws,wf,wb,k):
+
+    # -- unpacking --
+    tf32 = torch.float32
+    ti32 = torch.int32
+    device = noisy.device
+    bsize,three = access.shape
+    t,c,h,w = noisy.shape
+    wt = min(wf + wb + 1,t-pt+1)
+
+    # -- allocs --
+    vals = float("inf") * th.ones(bsize,wt,ws,ws,dtype=tf32,device=device)
+    inds = -th.ones(bsize,wt,ws,ws,dtype=ti32,device=device)
+    bufs = th.zeros(bsize,3,wt,ws,ws,dtype=ti32,device=device)
+
+    # -- searching helpers --
+    tranges,n_tranges,min_tranges = create_frame_range(t,wf,wb,pt,device)
+
+    # -- launching --
+    sim_search_launcher(noisy,access,fflow,bflow,vals,inds,bufs,
+                        tranges,n_tranges,min_tranges,ref,ps,pt,chnls)
+    # -- reshape --
+    vals = rearrange(vals,'b wt wh ww -> b (wt wh ww)')
+    inds = rearrange(inds,'b wt wh ww -> b (wt wh ww)')
+
+    return vals,inds
+
+
+def sim_search_launcher(noisy,access,fflow,bflow,vals,inds,bufs,
+                        tranges,n_tranges,min_tranges,ref,ps,pt,chnls):
+
+    # -- numba-fy tensors --
+    noisy_nba = cuda.as_cuda_array(noisy)
+    access_nba = cuda.as_cuda_array(access)
+    fflow_nba = cuda.as_cuda_array(fflow)
+    bflow_nba = cuda.as_cuda_array(bflow)
+    vals_nba = cuda.as_cuda_array(vals)
+    inds_nba = cuda.as_cuda_array(inds)
+    bufs_nba = cuda.as_cuda_array(bufs)
+    tranges_nba = cuda.as_cuda_array(tranges)
+    n_tranges_nba = cuda.as_cuda_array(n_tranges)
+    min_tranges_nba = cuda.as_cuda_array(min_tranges)
+    cs = th.cuda.default_stream().cuda_stream
+    cs_nba = cuda.external_stream(cs)
+
+    # -- launch params --
+    batches_per_block = 10
+    bpb = batches_per_block
+    bsize,wt,ws,ws = inds.shape
+    w_thread = min(ws,32)
+    nthread_loops = divUp(ws,32)
+    threads = (w_thread,w_thread)
+    nthread_loops = ws*ws
+    blocks = divUp(bsize,batches_per_block)
+
+    # -- sim patch search --
+    sim_search_kernel[blocks,threads,cs_nba](noisy_nba,access_nba,fflow_nba,bflow_nba,
+                                             vals_nba,inds_nba,bufs_nba,tranges_nba,
+                                             n_tranges_nba,min_tranges_nba,
+                                             ref,ps,pt,chnls,bpb,nthread_loops)
+
 
 # ------------------------------------------------------
 #

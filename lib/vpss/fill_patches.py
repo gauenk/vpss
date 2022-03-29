@@ -110,7 +110,7 @@ def get_patches_burst(noisy,inds,ps,cs=None,**kwargs):
     # -- create patches --
     shape = (npatches,k,pt,c,ps,ps)
     patches = optional(kwargs,'patches',None)
-    print("shapes: ",patches.shape,shape)
+    # print("shapes: ",patches.shape,shape)
     if patches is None:
         patches = torch.zeros(shape,dtype=torch.float,device=device)
     fill_patches(patches,noisy,inds,poff,cs,mode)
@@ -123,7 +123,7 @@ def fill_patches(patches,noisy,inds,poff=0,cs=None,mode="default"):
     t,c,h,w = noisy.shape
     bsize,k = inds.shape
     bsize,k,ps_t,c,ps,ps = patches.shape
-    # print("patches.shape: ",patches.shape)
+    print("patches.shape: ",patches.shape)
     # print("noisy.shape: ",noisy.shape)
     # print("inds.shape: ",inds.shape)
     # print(inds)

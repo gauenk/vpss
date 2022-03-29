@@ -12,9 +12,10 @@ from einops import rearrange,repeat
 import hids
 
 # -- sim search import --
-from .utils import optional
+from .utils import optional,get_3d_inds
 from .l2norm_impl import compute_l2norm_cuda,compute_l2norm_cuda_fast
 from .l2norm_impl import python_faiss_cuda
+from .l2norm_impl import sim_cuda
 from .fill_patches import get_patches_burst
 from .needle_impl import get_needles
 
@@ -80,6 +81,8 @@ def exec_sim_search_burst(srch_img,srch_inds,vals,inds,flows,sigma,args):
         exec_sim_search_burst_l2(srch_img,srch_inds,vals,inds,flows,sigma,args)
     elif stype == "faiss":
         exec_sim_search_burst_faiss(srch_img,srch_inds,vals,inds,flows,sigma,args)
+    elif stype == "sim_image":
+        exec_sim_search_similar(srch_img,srch_inds,vals,inds,flows,args)
     elif stype == "needle":
         exec_sim_search_burst_needle(srch_img,srch_inds,vals,inds,flows,sigma,args)
     else:
@@ -247,7 +250,32 @@ def exec_sim_search_burst_faiss(srch_img,srch_inds,vals,inds,flows,sigma,args):
 
     # -- compute top k --
     device,b = l2_vals.device,l2_vals.shape[0]
+    if l2_vals.shape[0] > 90000:
+        th.cuda.empty_cache()
     get_topk(l2_vals,l2_inds,vals,inds)
+
+def exec_sim_search_similar(noisy,access,vals,inds,flows,args):
+
+    # -- unpack --
+    ps = optional(args,'ps',7)
+    pt = optional(args,'pt',1)
+    ws = optional(args,'ws',27)
+    wf = optional(args,'wf',6)
+    wb = optional(args,'wb',6)
+    k = optional(args,'k',2)
+    chnls = optional(args,'chnls',1)
+    ref = optional(args,'ref',-1)
+
+    # -- flows --
+    fflow = flows.fflow
+    bflow = flows.bflow
+
+    # -- exec search --
+    l2_vals,l2_inds = sim_cuda(noisy,access,fflow,bflow,ref,ps,pt,chnls,ws,wf,wb,k)
+
+    # -- run topk --
+    get_topk(l2_vals,l2_inds,vals,inds)
+
 
 def ensure_srch_inds(inds,srch_inds,h,w,c):
     """
@@ -296,4 +324,88 @@ def get_topk(l2_vals,l2_inds,vals,inds):
     # -- get top k --
     vals[:b,:] = th.gather(l2_vals,1,order[:,:k])
     inds[:b,:] = th.gather(l2_inds,1,order[:,:k])
+
+
+# --------------------------
+#
+#    Exhaustive Searching
+#
+# --------------------------
+
+def exh_search_default_args():
+    args = edict({'ps':7,'pt':1,'c':3})
+    args['stype'] = "faiss"
+    args['vpss_mode'] = "exh"
+    args['bstride'] = 1
+    return args
+
+def exh_search_default(clean,flows,sigma,K):
+    args = exh_search_default_args
+    args.c = int(clean.shape[1])
+    return exh_search(clean,flows,sigma,K,args)
+
+def get_flows(flows,t,h,w,device):
+    # -- handle flows --
+    tf32 = th.float32
+    if flows is None:
+        flows = edict()
+    if not("fflow" in flows):
+        fshape = (t,2,h,w)
+        flows.fflow = th.zeros(fshape,dtype=tf32,device=device)
+        flows.bflow = flows.fflow
+    return flows
+
+def exh_search(clean,flows,sigma,K,args,clock=None):
+
+    # -- unpack --
+    device = clean.device
+    shape = clean.shape
+    t,c,h,w = shape
+
+    # -- get flows --
+    flows = get_flows(flows,t,h,w,device)
+
+    # -- get search inds --
+    index,BSIZE,stride = 0,t*h*w,args.bstride
+    srch_inds = get_search_inds(index,BSIZE,stride,shape,device)
+    srch_inds = srch_inds.type(th.int32)
+    # print("srch_inds.shape: ",srch_inds.shape)
+
+    # -- get return shells --
+    numQueries = ((BSIZE - 1)//args.bstride)+1
+    # print("numQueries: ",numQueries,args.bstride,BSIZE)
+    nq,pt,c,ps = numQueries,args.pt,args.c,args.ps
+    vals,inds,patches = init_topk_shells(nq,K,pt,c,ps,device)
+
+    # -- search using numba code --
+    clock.tic()
+    exec_sim_search_burst(clean,srch_inds,vals,inds,flows,sigma,args)
+
+    # -- fill patches --
+    get_patches_burst(clean,inds,ps,pt=pt,patches=patches,fill_mode="faiss")
+
+    # -- weight floating-point issue --
+    patches = patches.type(th.float32)
+    th.cuda.synchronize()
+    clock.toc()
+
+    return vals,inds,patches
+
+
+def init_topk_shells(bsize,k,pt,c,ps,device):
+    tf32,ti32 = th.float32,th.int32
+    vals = float("inf") * th.ones((bsize,k),dtype=tf32,device=device)
+    inds = -th.ones((bsize,k),dtype=ti32,device=device)
+    patches = -th.ones((bsize,k,pt,c,ps,ps),dtype=tf32,device=device)
+    return vals,inds,patches
+
+def get_search_inds(index,bsize,stride,shape,device):
+    t,c,h,w  = shape
+    start = index * bsize
+    stop = ( index + 1 ) * bsize
+    ti32 = th.int32
+    srch_inds = th.arange(start,stop,stride,dtype=ti32,device=device)[:,None]
+    srch_inds = get_3d_inds(srch_inds,h,w)
+    srch_inds = srch_inds.contiguous()
+    return srch_inds
 
